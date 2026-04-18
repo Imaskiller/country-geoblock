@@ -1,0 +1,112 @@
+name: Update Geoblock Lists
+
+on:
+  schedule:
+    - cron: '25 21 * * *' 
+  workflow_dispatch:
+
+permissions:
+  contents: write   
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download and split IP lists
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          COUNTRY_CODES: ${{ secrets.COUNTRY_CODES2 }}
+          DOWNLOAD_TIMEOUT: ${{ secrets.DOWNLOAD_TIMEOUT }}
+          DOWNLOAD_RETRIES: ${{ secrets.DOWNLOAD_RETRIES }}
+          DOWNLOAD_DELAY: ${{ secrets.DOWNLOAD_DELAY }}
+          DOWNLOAD_DELAY_MAX: ${{ secrets.DOWNLOAD_DELAY_MAX }}
+
+        run: |
+          set -euo pipefail
+
+          if [ -z "${COUNTRY_CODES:-}" ]; then
+            echo "Error: COUNTRY_CODES secret is not set."
+            exit 1
+          fi
+
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "Error: BASE_URL secret is not set."
+            exit 1
+          fi
+
+          TIMEOUT="${DOWNLOAD_TIMEOUT:-30}"
+          MAX_RETRIES="${DOWNLOAD_RETRIES:-3}"
+          DELAY_MIN="${DOWNLOAD_DELAY:-2}"
+          DELAY_MAX="${DOWNLOAD_DELAY_MAX:-10}"
+
+          mkdir -p ipv4 ipv6
+
+          for country in $COUNTRY_CODES; do
+            echo "Downloading IP list for ${country}..."
+            url="${BASE_URL}${country}.netset"
+            attempt=1
+            success=false
+
+            while [ "$attempt" -le "$MAX_RETRIES" ]; do
+              echo "  Attempt ${attempt}/${MAX_RETRIES}..."
+              tmpfile=$(mktemp)
+              curl_exit=0
+              curl -s --max-time "$TIMEOUT" "$url" -o "$tmpfile" || curl_exit=$?
+
+              if [ "$curl_exit" -eq 0 ]; then
+                # IPv4: lines without ':', normalise bare IPs to /32 CIDR
+                grep -v ':' "$tmpfile" | \
+                  awk '/\// { print; next } /^[0-9]/ { print $0 "/32" }' \
+                  > "ipv4/${country}.netset"
+
+                # IPv6: lines containing ':' that are not comments
+                grep ':' "$tmpfile" | grep -v '^#' \
+                  > "ipv6/${country}.netset" || true   # empty result is fine
+
+                rm -f "$tmpfile"
+                echo "  Done."
+                success=true
+                break
+              elif [ "$curl_exit" -eq 28 ]; then
+                rm -f "$tmpfile"
+                echo "  Timeout downloading ${country}."
+                if [ "$attempt" -lt "$MAX_RETRIES" ]; then
+                  echo "  Waiting 60s before retry..."
+                  sleep 60
+                fi
+              else
+                rm -f "$tmpfile"
+                echo "  Error downloading ${country} (curl exit code ${curl_exit})."
+                break
+              fi
+
+              attempt=$((attempt + 1))
+            done
+
+            if [ "$success" = false ]; then
+              echo "Failed to download ${country} after ${MAX_RETRIES} attempts."
+              exit 1
+            fi
+
+            delay=$(( DELAY_MIN + RANDOM % (DELAY_MAX - DELAY_MIN + 1) ))
+            echo "  Sleeping ${delay}s before next download..."
+            sleep "$delay"
+          done
+
+      - name: Commit and push updated lists
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add ipv4/ ipv6/
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update geoblock IP lists [$(date -u +%Y-%m-%d)]"
+            git push
+          fi

@@ -2,7 +2,7 @@ name: Update Geoblock Lists
 
 on:
   schedule:
-    - cron: '25 21 * * *' 
+    - cron: '34 5 * * *' 
   workflow_dispatch:
 
 permissions:
@@ -19,7 +19,7 @@ jobs:
       - name: Download and split IP lists
         env:
           BASE_URL: ${{ secrets.BASE_URL }}
-          COUNTRY_CODES: ${{ secrets.COUNTRY_CODES }}
+          COUNTRY_CODES: ${{ secrets.COUNTRY_CODES3 }}
           DOWNLOAD_TIMEOUT: ${{ secrets.DOWNLOAD_TIMEOUT }}
           DOWNLOAD_RETRIES: ${{ secrets.DOWNLOAD_RETRIES }}
           DOWNLOAD_DELAY: ${{ secrets.DOWNLOAD_DELAY }}

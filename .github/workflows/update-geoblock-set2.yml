@@ -2,7 +2,7 @@ name: Update Geoblock Lists
 
 on:
   schedule:
-    - cron: '25 21 * * *' 
+    - cron: '22 20 * * *' 
   workflow_dispatch:
 
 permissions:
